@@ -1,0 +1,366 @@
+version: '3.9'
+
+services:
+  # ==================== DATABASE ====================
+  postgres:
+    image: postgres:16-alpine
+    container_name: clippings_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-clippings_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres123}
+      POSTGRES_DB: ${DB_NAME:-clippings_db}
+      POSTGRES_INITDB_ARGS: "-c max_connections=100 -c shared_buffers=256MB"
+    # Porta não exposta externamente - acesso apenas via rede interna
+    # ports:
+    #   - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-clippings_user} -d ${DB_NAME:-clippings_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - clippings-network
+    labels:
+      com.example.description: "PostgreSQL Database for Clippings"
+
+  # ==================== MESSAGE BROKER ====================
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    container_name: clippings_rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-admin123}
+      RABBITMQ_DEFAULT_VHOST: /
+    ports:
+      - "5672:5672"      # AMQP
+      - "15672:15672"    # Management UI
+      - "15674:15674"    # Web-STOMP (WebSocket)
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      # - ./config/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro  # Comentado temporariamente
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    networks:
+      - clippings-network
+    labels:
+      com.example.description: "RabbitMQ Message Broker with Web-STOMP"
+
+  # ==================== LOG AGGREGATION ====================
+  loki:
+    image: grafana/loki:latest
+    container_name: clippings_loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/loki
+      - ./config/loki-config.yaml:/etc/loki/local-config.yaml:ro
+    user: "10001:10001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3100/loki/api/v1/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - clippings-network
+    labels:
+      com.example.description: "Grafana Loki - Log Aggregation"
+    command: -config.file=/etc/loki/local-config.yaml
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: clippings_promtail
+    restart: unless-stopped
+    ports:
+      - "1514:1514"
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./config/promtail-config.yaml:/etc/promtail/config.yml:ro
+    depends_on:
+      loki:
+        condition: service_healthy
+    networks:
+      - clippings-network
+    labels:
+      com.example.description: "Promtail - Log Collector"
+    command: -config.file=/etc/promtail/config.yml
+
+  # ==================== VISUALIZATION ====================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: clippings_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      GF_LOG_MODE: console
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./config/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on:
+      loki:
+        condition: service_healthy
+    networks:
+      - clippings-network
+    labels:
+      com.example.description: "Grafana - Logs and Metrics Visualization"
+
+  # ==================== BROWSER AUTOMATION ====================
+  browserless:
+    image: browserless/chrome:latest
+    container_name: clippings_browserless
+    restart: unless-stopped
+    environment:
+      DEBUG: "true"
+      ENABLE_DEBUGGER: "true"
+      ENABLE_CHROME_STABLE_SHIM: "true"
+      USE_CHROME_STABLE: "true"
+      WORKSPACE_DIR: /workspace
+    ports:
+      - "3001:3000"
+    volumes:
+      - browserless_cache:/root/.cache
+      - ./workspace:/workspace
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - clippings-network
+    labels:
+      com.example.description: "Browserless - Headless Chrome"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # ==================== MCP SERVER ====================
+  # browser_use_mcp:
+  #   image: ghcr.io/saik0s/mcp-browser-use:latest
+  #   container_name: clippings_browser_use_mcp
+  #   restart: unless-stopped
+  #   environment:
+  #     MCP_BROWSER_CDP_URL: http://browserless:3000
+  #     MCP_LOG_LEVEL: debug
+  #     MCP_BROWSER_USE_OWN_BROWSER: "true"
+  #   depends_on:
+  #     browserless:
+  #       condition: service_healthy
+  #   networks:
+  #     - clippings-network
+  #   labels:
+  #     com.example.description: "Browser-Use MCP Server"
+
+  # ==================== WORKER - MAIN AGENT ====================
+  agno_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: clippings_agno_worker
+    restart: unless-stopped
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${DB_USER:-clippings_user}:${DB_PASSWORD:-postgres123}@postgres:5432/${DB_NAME:-clippings_db}
+      
+      # RabbitMQ
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin123}@rabbitmq:5672/
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      
+      # Logging & Telemetry
+      LOGS_WS_BROKER: ws://rabbitmq:15674/ws
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DEBUG: ${DEBUG:-false}
+      
+      # MinIO S3
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-clippings}
+      MINIO_USE_SSL: "false"
+      
+      # LLM
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o}
+      LLM_INPUT_COST_PER_1K: ${LLM_INPUT_COST_PER_1K:-0.005}
+      LLM_OUTPUT_COST_PER_1K: ${LLM_OUTPUT_COST_PER_1K:-0.015}
+      BROWSERLESS_TOKEN: ${BROWSERLESS_TOKEN:-}
+      BROWSER_USE_MODEL: ${BROWSER_USE_MODEL:-gpt-5-mini-2025-08-07}
+      BROWSER_USE_MAX_STEPS: ${BROWSER_USE_MAX_STEPS:-40}
+      BROWSER_USE_TEMPERATURE: ${BROWSER_USE_TEMPERATURE:-0.2}
+      BROWSER_USE_ALLOWED_DOMAINS: ${BROWSER_USE_ALLOWED_DOMAINS:-}
+      BROWSER_USE_RETRIES: ${BROWSER_USE_RETRIES:-2}
+      
+      # Notificações
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      SMTP_ENABLED: ${SMTP_ENABLED:-true}
+      SMTP_SERVER: ${SMTP_SERVER:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_TO: ${SMTP_TO:-}
+      
+      # MCP
+      # MCP_ENDPOINT: http://browser_use_mcp:8000
+      
+      # Worker Config
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-3}
+      MAX_RETRIES: ${MAX_RETRIES:-3}
+      BACKOFF_SECONDS: ${BACKOFF_SECONDS:-30}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+      browserless:
+        condition: service_started
+      minio:
+        condition: service_started
+    volumes:
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+    networks:
+      - clippings-network
+    labels:
+      com.example.description: "Agno Worker - Main Agent Orchestrator"
+
+  # ==================== SCHEDULER ====================
+  agno_scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.scheduler
+    container_name: clippings_agno_scheduler
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin123}@rabbitmq:5672/
+      DATABASE_URL: postgresql://${DB_USER:-clippings_user}:${DB_PASSWORD:-postgres123}@postgres:5432/${DB_NAME:-clippings_db}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DEBUG: ${DEBUG:-false}
+      TIMEZONE: ${TIMEZONE:-America/Sao_Paulo}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+    networks:
+      - clippings-network
+    labels:
+      com.example.description: "APScheduler - Cron Job Scheduler"
+
+  # ==================== API DASHBOARD ====================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: clippings_api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-clippings_user}:${DB_PASSWORD:-postgres123}@postgres:5432/${DB_NAME:-clippings_db}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin123}@rabbitmq:5672/
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - clippings-network
+    labels:
+      com.example.description: "FastAPI - Monitoring Dashboard"
+
+  # ==================== OBJECT STORAGE ====================
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-01-13T07-53-03Z-cpuv1
+    container_name: clippings_minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9003:9000"      # API (mudado para evitar conflito)
+      - "9001:9001"      # Console
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - clippings-network
+    labels:
+      com.example.description: "MinIO - Object Storage S3 Compatible"
+
+  # ==================== PORTAINER AGENT (opcional) ====================
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    ports:
+      - "9002:9000"
+      - "8001:8001"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - portainer_data:/data
+    networks:
+      - clippings-network
+    labels:
+      com.example.description: "Portainer - Container Management"
+
+# ==================== VOLUMES ====================
+volumes:
+  postgres_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
+  grafana_data:
+    driver: local
+  loki_data:
+    driver: local
+  browserless_cache:
+    driver: local
+  minio_data:
+    driver: local
+  portainer_data:
+    driver: local
+
+# ==================== NETWORKS ====================
+networks:
+  clippings-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+

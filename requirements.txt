@@ -1,0 +1,50 @@
+# Core dependencies
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.11.7
+pydantic-settings==2.5.2
+
+# Database
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+alembic==1.13.2
+
+# Message Queue
+celery==5.4.0
+kombu==5.4.2
+pika==1.3.2
+
+# Scheduler
+apscheduler==3.10.4
+
+# HTTP Client
+httpx==0.28.1
+requests==2.32.3
+
+# LLM
+openai==2.8.1
+anthropic==0.74.0
+browser-use==0.9.7
+
+# S3/MinIO
+boto3==1.35.20
+minio==7.2.3
+
+# Browser Automation
+playwright==1.48.0
+selenium==4.27.1
+beautifulsoup4==4.12.3
+lxml==5.1.0
+
+# Logging
+python-json-logger==2.0.7
+structlog==24.2.0
+
+# Utilities
+python-dotenv==1.0.1
+python-multipart==0.0.12
+pytz==2024.2
+
+# Monitoring
+prometheus-client==0.21.0
+
