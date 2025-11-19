@@ -9,6 +9,7 @@ buscas) e entrega de reasoning completo.
 from __future__ import annotations
 
 import asyncio
+import time
 import logging
 import os
 from typing import Dict, Any, Optional, List
@@ -20,6 +21,7 @@ from browser_use.agent.views import AgentHistoryList
 from browser_use.browser.profile import BrowserProfile
 from browser_use.browser.session import BrowserSession
 from browser_use.llm.models import ChatOpenAI
+from websockets.exceptions import ConnectionClosedError
 
 from .base_agent import BaseAgent
 
@@ -38,6 +40,7 @@ class BrowserAgent(BaseAgent):
         self.browser_use_model = configuracao.get("browser_use_model", "gpt-4o-mini")
         self.browser_use_max_steps = configuracao.get("browser_use_max_steps", 40)
         self.browser_use_temperature = configuracao.get("browser_use_temperature", 0.2)
+        self.browser_use_retries = configuracao.get("browser_use_retries", 2)
         self.allowed_domains: List[str] = configuracao.get("allowed_domains") or [
             "automotivebusiness.com.br",
             "www.automotivebusiness.com.br",
@@ -57,7 +60,7 @@ class BrowserAgent(BaseAgent):
         tarefa = self._montar_tarefa(contexto)
         self.registrar_log("navegacao", f"Iniciando BrowserUSE com tarefa: {tarefa}")
         
-        history = self._executar_browser_use(tarefa)
+        history = self._executar_com_retries(tarefa)
         self._logar_passos(history)
         
         conteudo = history.final_result() or self._resumir_passos(history)
@@ -103,6 +106,23 @@ class BrowserAgent(BaseAgent):
             f"Requisitos:\n- {etapas_formatadas}\n"
             "Só conclua quando o sumário executivo estiver pronto."
         )
+    
+    def _executar_com_retries(self, tarefa: str) -> AgentHistoryList:
+        tentativas = max(1, int(self.browser_use_retries))
+        erros: List[str] = []
+        
+        for tentativa in range(1, tentativas + 1):
+            try:
+                return self._executar_browser_use(tarefa)
+            except (ConnectionClosedError, TimeoutError, RuntimeError) as exc:
+                msg = f"Tentativa {tentativa}/{tentativas} falhou: {exc}"
+                erros.append(msg)
+                self.registrar_log("erro", f"[BrowserUSE] {msg}")
+                if tentativa < tentativas:
+                    time.sleep(3)
+                continue
+        
+        raise RuntimeError("BrowserUSE falhou após múltiplas tentativas: " + "; ".join(erros))
     
     def _executar_browser_use(self, tarefa: str) -> AgentHistoryList:
         cdp_url = self._obter_cdp_url()

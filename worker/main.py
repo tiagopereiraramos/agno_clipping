@@ -54,6 +54,7 @@ class ConfiguracoesWorker(BaseSettings):
     browser_use_max_steps: int = 40
     browser_use_temperature: float = 0.2
     browser_use_allowed_domains: Optional[str] = None
+    browser_use_retries: int = 2
     
     # MinIO
     minio_endpoint: Optional[str] = None
@@ -144,6 +145,7 @@ class WorkerAgno:
             "browser_use_model": self.config.browser_use_model,
             "browser_use_max_steps": self.config.browser_use_max_steps,
             "browser_use_temperature": self.config.browser_use_temperature,
+            "browser_use_retries": self.config.browser_use_retries,
             "allowed_domains": allowed_domains
         })
         
