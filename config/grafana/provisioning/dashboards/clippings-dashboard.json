@@ -1,0 +1,41 @@
+{
+  "dashboard": {
+    "title": "Clippings Agno - Main Dashboard",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Worker Logs (Last 1h)",
+        "targets": [
+          {
+            "expr": "{job=\"worker\"}",
+            "refId": "A"
+          }
+        ],
+        "type": "logs"
+      },
+      {
+        "id": 2,
+        "title": "Job Execution Trace",
+        "targets": [
+          {
+            "expr": "{job=~\"scheduler|worker|api\"}",
+            "refId": "B"
+          }
+        ],
+        "type": "logs"
+      },
+      {
+        "id": 3,
+        "title": "Error Rate",
+        "targets": [
+          {
+            "expr": "{level=\"error\"}",
+            "refId": "C"
+          }
+        ],
+        "type": "stat"
+      }
+    ]
+  }
+}
+

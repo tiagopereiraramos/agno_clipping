@@ -1,0 +1,49 @@
+server:
+  http_listen_port: 1514
+  log_level: info
+
+positions:
+  filename: /tmp/positions.yaml
+
+client:
+  url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Docker container logs
+  - job_name: docker
+    static_configs:
+      - labels:
+          job: dockerlogs
+        __path__: /var/lib/docker/containers/*/*-json.log
+    pipeline_stages:
+      - json:
+          expressions:
+            output: log
+            stream: stream
+      - regex:
+          expression: '^(?P<time>[^ ]+) (?P<stream>stdout|stderr) (?P<flags>[^ ]*) (?P<content>.*)$'
+      - labels:
+          stream:
+          time:
+
+  # Worker logs
+  - job_name: worker
+    static_configs:
+      - labels:
+          job: worker
+        __path__: /app/logs/worker.log
+
+  # Scheduler logs
+  - job_name: scheduler
+    static_configs:
+      - labels:
+          job: scheduler
+        __path__: /app/logs/scheduler.log
+
+  # API logs
+  - job_name: api
+    static_configs:
+      - labels:
+          job: api
+        __path__: /app/logs/api.log
+
