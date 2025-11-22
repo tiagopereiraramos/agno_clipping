@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   # ==================== DATABASE ====================
   postgres:
@@ -129,22 +127,39 @@ services:
     container_name: clippings_browserless
     restart: unless-stopped
     environment:
-      DEBUG: "true"
+      DEBUG: "browserless:*"
       ENABLE_DEBUGGER: "true"
       ENABLE_CHROME_STABLE_SHIM: "true"
       USE_CHROME_STABLE: "true"
-      WORKSPACE_DIR: /workspace
+      WORKSPACE_DIR: /tmp/browserless
+      MAX_CONCURRENT_SESSIONS: "5"
+      CONNECTION_TIMEOUT: "60000"
+      MAX_QUEUE_LENGTH: "5"
+      KEEP_ALIVE: "true"
+      KEEP_ALIVE_INTERVAL: "20000"  # Heartbeat a cada 20s (mais frequente)
+      ENABLE_QUEUE: "true"  # Habilitar fila para melhor gerenciamento
+      QUEUE_TIMEOUT: "300000"  # 5 minutos de timeout na fila
+      ENABLE_CORS: "true"
+      DEMO_MODE: "false"
+      TOKEN: ${BROWSERLESS_TOKEN:-}
+      ENABLE_XVFB: "false"
+      CHROME_REFRESH_TIME: "10800000"  # 3 horas (aumentado de 2)
+      DEFAULT_VIEWPORT: "1920x1080"
+      CHROME_ARGS: "--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage,--disable-gpu,--disable-software-rasterizer"
+      TIMEOUT: "60000"
+      QUEUE_LENGTH: "5"
     ports:
-      - "3001:3000"
+      - "3000:3000"
+      - "3001:3001"
     volumes:
       - browserless_cache:/root/.cache
-      - ./workspace:/workspace
+      - /tmp/browserless:/tmp/browserless
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
-      interval: 30s
-      timeout: 10s
+      test: ["CMD", "curl", "-f", "http://localhost:3000/json/version"]
+      interval: 10s
+      timeout: 5s
       retries: 5
-      start_period: 60s
+      start_period: 20s
     networks:
       - clippings-network
     labels:
@@ -153,6 +168,14 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    deploy:
+      resources:
+        limits:
+          memory: 6G  # Aumentado de 4G
+          cpus: '2.0'
+        reservations:
+          memory: 3G  # Aumentado de 2G
+          cpus: '1.0'
 
   # ==================== MCP SERVER ====================
   # browser_use_mcp:
@@ -205,12 +228,25 @@ services:
       LLM_MODEL: ${LLM_MODEL:-gpt-4o}
       LLM_INPUT_COST_PER_1K: ${LLM_INPUT_COST_PER_1K:-0.005}
       LLM_OUTPUT_COST_PER_1K: ${LLM_OUTPUT_COST_PER_1K:-0.015}
+      BROWSER_ENGINE: ${BROWSER_ENGINE:-browser-use}  # "browser-use" ou "skyvern"
+      USE_LOCAL_BROWSER: ${USE_LOCAL_BROWSER:-true}  # true = Playwright local, false = Browserless remoto (apenas para browser-use)
+      BROWSERLESS_URL: ${BROWSERLESS_URL:-http://browserless:3000}
       BROWSERLESS_TOKEN: ${BROWSERLESS_TOKEN:-}
+      SKYVERN_MODEL: ${SKYVERN_MODEL:-gpt-5-mini-2025-08-07}
+      SKYVERN_TIMEOUT: ${SKYVERN_TIMEOUT:-3600}
+      SKYVERN_PROMPT_PATH: ${SKYVERN_PROMPT_PATH:-/app/prompts/clipping_lear.txt}
+      SKYVERN_CONFIG_PATH: ${SKYVERN_CONFIG_PATH:-/app/config/clipping_params.json}
+      SKYVERN_RESULTS_DIR: ${SKYVERN_RESULTS_DIR:-/app/results}
+      # Skyvern Transport (http para servidor local, stdio para execução direta)
+      SKYVERN_TRANSPORT: ${SKYVERN_TRANSPORT:-http}  # "http" (recomendado) ou "stdio"
+      SKYVERN_BASE_URL: ${SKYVERN_BASE_URL:-http://localhost:8000}  # URL do servidor Skyvern local
+      SKYVERN_API_KEY: ${SKYVERN_API_KEY:-}  # API key do Skyvern Cloud (opcional para modo local)
       BROWSER_USE_MODEL: ${BROWSER_USE_MODEL:-gpt-5-mini-2025-08-07}
-      BROWSER_USE_MAX_STEPS: ${BROWSER_USE_MAX_STEPS:-40}
+      BROWSER_USE_MAX_STEPS: ${BROWSER_USE_MAX_STEPS:-30}
       BROWSER_USE_TEMPERATURE: ${BROWSER_USE_TEMPERATURE:-0.2}
       BROWSER_USE_ALLOWED_DOMAINS: ${BROWSER_USE_ALLOWED_DOMAINS:-}
-      BROWSER_USE_RETRIES: ${BROWSER_USE_RETRIES:-2}
+      BROWSER_USE_RETRIES: ${BROWSER_USE_RETRIES:-3}
+      BROWSER_USE_TIMEOUT: ${BROWSER_USE_TIMEOUT:-3600} # 60 minutos (aumentado para máxima estabilidade)
       
       # Notificações
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
@@ -241,6 +277,8 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./config:/app/config:ro
+      - ./browser_session:/app/browser_session:ro
+      - ./prompts:/app/prompts:ro # Prompts parametrizáveis
     networks:
       - clippings-network
     labels:

@@ -83,22 +83,41 @@ try:
     channel = connection.channel()
     channel.queue_declare(queue='clippings.jobs', durable=True)
 
-    mensagem = {
-        "instruction": """${PROMPT}""",
-        "parameters": {
-            "site": "https://www.automotivebusiness.com.br/",
+    # Tentar carregar parâmetros do arquivo de configuração
+    import os
+    params_file = "/app/config/clipping_params.json"
+    if os.path.exists(params_file):
+        with open(params_file, 'r', encoding='utf-8') as f:
+            params_config = json.load(f)
+    else:
+        # Parâmetros padrão
+        params_config = {
             "cliente": "LEAR",
-            "palavras_chave": [
-                "Lear",
-                "Lear Corporation",
-                "Lear do Brasil"
-            ],
-            "estrategia_busca": "abrir página inicial, identificar campo 'Buscar', pesquisar termos na ordem indicada e percorrer resultados até reunir 3 notícias",
+            "periodo": "últimos 7 dias",
+            "max_itens": 10,
             "min_noticias": 3,
+            "url": "https://www.automotivebusiness.com.br/",
+            "palavras_chave": ["Lear", "Lear Corporation", "Lear do Brasil"],
             "extrair_imagens": False,
             "extrair_links": True,
             "formato": "both",
             "notificar": True
+        }
+    
+    mensagem = {
+        "instruction": """${PROMPT}""",
+        "parameters": {
+            "site": params_config.get("url", "https://www.automotivebusiness.com.br/"),
+            "cliente": params_config.get("cliente", "LEAR"),
+            "periodo": params_config.get("periodo", "últimos 7 dias"),
+            "max_itens": params_config.get("max_itens", 10),
+            "palavras_chave": params_config.get("palavras_chave", ["Lear", "Lear Corporation", "Lear do Brasil"]),
+            "estrategia_busca": "abrir página inicial, identificar campo 'Buscar', pesquisar termos na ordem indicada e percorrer resultados até reunir 3 notícias",
+            "min_noticias": params_config.get("min_noticias", 3),
+            "extrair_imagens": params_config.get("extrair_imagens", False),
+            "extrair_links": params_config.get("extrair_links", True),
+            "formato": params_config.get("formato", "both"),
+            "notificar": params_config.get("notificar", True)
         },
         "timestamp": datetime.now().isoformat()
     }

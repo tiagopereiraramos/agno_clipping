@@ -129,92 +129,102 @@ class NotificationAgent(BaseAgent):
             msg['Subject'] = f"[Clipping LEAR] Job {job_id} - {status.upper()}"
             
             url = contexto.get("url", "N/A")
-            resumo = contexto.get("resumo_conteudo") or (contexto.get("conteudo_extraido") or "")[:600]
+            relatorio_formatado = contexto.get("relatorio_formatado", {})
+            email_body_ptbr = contexto.get("email_body_ptbr") or relatorio_formatado.get("email_body_ptbr", "")
             artefatos = contexto.get("artefatos", {})
             parametros = contexto.get("parametros", {})
             
-            linhas_plain = [
-                "Relatório de Clipping Processado",
-                "",
-                f"Job: {job_id}",
-                f"Status: {status}",
-                f"URL base: {url}",
-                "",
-                "Resumo do conteúdo:",
-                resumo or "Não foi possível gerar resumo.",
-                "",
-                "Artefatos gerados:"
-            ]
-            linhas_html = [
-                "<html><body>",
-                "<h2 style='font-family:Arial,sans-serif;color:#0b3d91;'>Clipping LEAR - Automotive Business</h2>",
-                f"<p><strong>Job:</strong> {job_id}<br>",
-                f"<strong>Status:</strong> {status.upper()}<br>",
-                f"<strong>Fonte inicial:</strong> <a href='{url}'>{url}</a></p>",
-                "<h3 style='font-family:Arial,sans-serif;color:#0b3d91;'>Resumo principal</h3>",
-                f"<p style='font-family:Arial,sans-serif;white-space:pre-wrap;'>{resumo or 'Sem conteúdo disponível.'}</p>",
-            ]
-            
-            if artefatos:
-                linhas_plain.append("")
-                for formato, info in artefatos.items():
-                    uri = info.get("uri", "N/A")
-                    linhas_plain.append(f"- {formato.upper()}: {uri}")
-                linhas_html.append("<h3 style='font-family:Arial,sans-serif;color:#0b3d91;'>Downloads</h3><ul>")
-                for formato, info in artefatos.items():
-                    uri = info.get("uri", "#")
-                    tamanho = info.get("size", 0)
-                    linhas_html.append(
-                        f"<li><strong>{formato.upper()}:</strong> "
-                        f"<a href='{uri}'>{uri}</a> "
-                        f"(~{tamanho} bytes)</li>"
-                    )
-                linhas_html.append("</ul>")
+            # Usar relatório formatado se disponível, senão usar fallback
+            if relatorio_formatado:
+                linhas_plain = [relatorio_formatado.get("texto", "")]
+                linhas_html = [relatorio_formatado.get("html", "")]
             else:
-                linhas_plain.append("- Nenhum artefato disponível.")
-                linhas_html.append("<p><em>Nenhum artefato disponível.</em></p>")
+                # Fallback para formato antigo
+                resumo = contexto.get("resumo_conteudo") or (contexto.get("conteudo_extraido") or "")[:600]
+                linhas_plain = [
+                    "Relatório de Clipping Processado",
+                    "",
+                    f"Job: {job_id}",
+                    f"Status: {status}",
+                    f"URL base: {url}",
+                    "",
+                    "Resumo do conteúdo:",
+                    email_body_ptbr or resumo or "Não foi possível gerar resumo.",
+                    "",
+                    "Artefatos gerados:"
+                ]
+                linhas_html = [
+                    "<html><body>",
+                    "<h2 style='font-family:Arial,sans-serif;color:#0b3d91;'>Clipping LEAR - Automotive Business</h2>",
+                    f"<p><strong>Job:</strong> {job_id}<br>",
+                    f"<strong>Status:</strong> {status.upper()}<br>",
+                    f"<strong>Fonte inicial:</strong> <a href='{url}'>{url}</a></p>",
+                    "<h3 style='font-family:Arial,sans-serif;color:#0b3d91;'>Resumo principal</h3>",
+                    f"<p style='font-family:Arial,sans-serif;white-space:pre-wrap;'>{email_body_ptbr or resumo or 'Sem conteúdo disponível.'}</p>",
+                ]
             
-            if parametros:
-                linhas_html.append("<h3 style='font-family:Arial,sans-serif;color:#0b3d91;'>Parâmetros da Busca</h3><ul>")
-                linhas_plain.append("")
-                linhas_plain.append("Parâmetros utilizados:")
-                for chave, valor in parametros.items():
-                    linhas_plain.append(f"- {chave}: {valor}")
-                    linhas_html.append(f"<li><strong>{chave}:</strong> {valor}</li>")
-                linhas_html.append("</ul>")
-            
-            llm_usage = contexto.get("llm_usage")
-            if llm_usage:
-                linhas_plain.append("")
-                linhas_plain.append("Consumo LLM:")
-                linhas_plain.append(f"- Prompt tokens: {llm_usage.get('prompt_tokens', 0)}")
-                linhas_plain.append(f"- Completion tokens: {llm_usage.get('completion_tokens', 0)}")
-                linhas_plain.append(f"- Custo total (USD): ${llm_usage.get('total_cost_usd', 0.0):.6f}")
-                
-                linhas_html.append("<h3 style='font-family:Arial,sans-serif;color:#0b3d91;'>Consumo de LLM</h3><ul>")
-                linhas_html.append(f"<li>Prompt tokens: {llm_usage.get('prompt_tokens', 0)}</li>")
-                linhas_html.append(f"<li>Completion tokens: {llm_usage.get('completion_tokens', 0)}</li>")
-                linhas_html.append(f"<li>Custo total (USD): ${llm_usage.get('total_cost_usd', 0.0):.6f}</li>")
-                linhas_html.append("</ul>")
-            
-            detalhes_llm = contexto.get("llm_usage_details")
-            if detalhes_llm:
-                linhas_plain.append("")
-                linhas_plain.append("Consumo por componente:")
-                linhas_html.append("<h3 style='font-family:Arial,sans-serif;color:#0b3d91;'>Detalhamento por componente</h3><ul>")
-                for nome, dados in detalhes_llm.items():
-                    linhas_plain.append(f"[{nome}] prompt={dados.get('prompt_tokens', 0)} tokens, completion={dados.get('completion_tokens', 0)} tokens, custo=${dados.get('total_cost_usd', 0.0):.6f}")
-                    linhas_html.append(
-                        "<li><strong>{}</strong>: prompt={} | completion={} | custo=${:.6f}</li>".format(
-                            nome,
-                            dados.get("prompt_tokens", 0),
-                            dados.get("completion_tokens", 0),
-                            dados.get("total_cost_usd", 0.0)
+            # Se não usou relatório formatado, adicionar artefatos e detalhes
+            if not relatorio_formatado:
+                if artefatos:
+                    linhas_plain.append("")
+                    for formato, info in artefatos.items():
+                        uri = info.get("uri", "N/A")
+                        linhas_plain.append(f"- {formato.upper()}: {uri}")
+                    linhas_html.append("<h3 style='font-family:Arial,sans-serif;color:#0b3d91;'>Downloads</h3><ul>")
+                    for formato, info in artefatos.items():
+                        uri = info.get("uri", "#")
+                        tamanho = info.get("size", 0)
+                        linhas_html.append(
+                            f"<li><strong>{formato.upper()}:</strong> "
+                            f"<a href='{uri}'>{uri}</a> "
+                            f"(~{tamanho} bytes)</li>"
                         )
-                    )
-                linhas_html.append("</ul>")
-            
-            linhas_html.append("<p style='font-family:Arial,sans-serif;'>Abraços,<br>Equipe Agno Clipping</p></body></html>")
+                    linhas_html.append("</ul>")
+                else:
+                    linhas_plain.append("- Nenhum artefato disponível.")
+                    linhas_html.append("<p><em>Nenhum artefato disponível.</em></p>")
+                
+                if parametros:
+                    linhas_html.append("<h3 style='font-family:Arial,sans-serif;color:#0b3d91;'>Parâmetros da Busca</h3><ul>")
+                    linhas_plain.append("")
+                    linhas_plain.append("Parâmetros utilizados:")
+                    for chave, valor in parametros.items():
+                        linhas_plain.append(f"- {chave}: {valor}")
+                        linhas_html.append(f"<li><strong>{chave}:</strong> {valor}</li>")
+                    linhas_html.append("</ul>")
+                
+                llm_usage = contexto.get("llm_usage")
+                if llm_usage:
+                    linhas_plain.append("")
+                    linhas_plain.append("Consumo LLM:")
+                    linhas_plain.append(f"- Prompt tokens: {llm_usage.get('prompt_tokens', 0)}")
+                    linhas_plain.append(f"- Completion tokens: {llm_usage.get('completion_tokens', 0)}")
+                    linhas_plain.append(f"- Custo total (USD): ${llm_usage.get('total_cost_usd', 0.0):.6f}")
+                    
+                    linhas_html.append("<h3 style='font-family:Arial,sans-serif;color:#0b3d91;'>Consumo de LLM</h3><ul>")
+                    linhas_html.append(f"<li>Prompt tokens: {llm_usage.get('prompt_tokens', 0)}</li>")
+                    linhas_html.append(f"<li>Completion tokens: {llm_usage.get('completion_tokens', 0)}</li>")
+                    linhas_html.append(f"<li>Custo total (USD): ${llm_usage.get('total_cost_usd', 0.0):.6f}</li>")
+                    linhas_html.append("</ul>")
+                
+                detalhes_llm = contexto.get("llm_usage_details")
+                if detalhes_llm:
+                    linhas_plain.append("")
+                    linhas_plain.append("Consumo por componente:")
+                    linhas_html.append("<h3 style='font-family:Arial,sans-serif;color:#0b3d91;'>Detalhamento por componente</h3><ul>")
+                    for nome, dados in detalhes_llm.items():
+                        linhas_plain.append(f"[{nome}] prompt={dados.get('prompt_tokens', 0)} tokens, completion={dados.get('completion_tokens', 0)} tokens, custo=${dados.get('total_cost_usd', 0.0):.6f}")
+                        linhas_html.append(
+                            "<li><strong>{}</strong>: prompt={} | completion={} | custo=${:.6f}</li>".format(
+                                nome,
+                                dados.get("prompt_tokens", 0),
+                                dados.get("completion_tokens", 0),
+                                dados.get("total_cost_usd", 0.0)
+                            )
+                        )
+                    linhas_html.append("</ul>")
+                
+                linhas_html.append("<p style='font-family:Arial,sans-serif;'>Abraços,<br>Equipe Agno Clipping</p></body></html>")
             
             msg.attach(MIMEText("\n".join(linhas_plain), "plain"))
             msg.attach(MIMEText("".join(linhas_html), "html"))

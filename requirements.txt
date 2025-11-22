@@ -1,50 +1,65 @@
-# Core dependencies
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
-pydantic==2.11.7
-pydantic-settings==2.5.2
+# ============================================
+# REQUIREMENTS.TXT - CONSTRUÍDO DO ZERO
+# Prioridade: Compatibilidade com Skyvern
+# ============================================
 
-# Database
-sqlalchemy==2.0.36
-psycopg2-binary==2.9.10
-alembic==1.13.2
+# Core do projeto (mínimo necessário)
+python-dotenv>=1.0.0
 
-# Message Queue
-celery==5.4.0
-kombu==5.4.2
-pika==1.3.2
+# Skyvern MCP + Agno (prioridade máxima)
+# Deixar skyvern resolver suas próprias dependências
+agno>=0.5.0
+skyvern[local]>=1.0.0
 
-# Scheduler
-apscheduler==3.10.4
+# Playwright (necessário para browser automation)
+playwright>=1.40.0
 
-# HTTP Client
-httpx==0.28.1
-requests==2.32.3
+# ============================================
+# DEPENDÊNCIAS OPCIONAIS (comentadas)
+# Descomente apenas se necessário para outras funcionalidades
+# ============================================
 
-# LLM
-openai==2.8.1
-anthropic==0.74.0
-browser-use==0.9.7
+# FastAPI/Web (se necessário para APIs)
+# fastapi>=0.115.4
+# uvicorn[standard]>=0.24.0
 
-# S3/MinIO
-boto3==1.35.20
-minio==7.2.3
+# Database (se necessário)
+# sqlalchemy>=2.0.0
+# psycopg2-binary>=2.9.0
+# alembic>=1.13.0
 
-# Browser Automation
-playwright==1.48.0
-selenium==4.27.1
-beautifulsoup4==4.12.3
-lxml==5.1.0
+# Message Queue (se necessário)
+# celery>=5.4.0
+# kombu>=5.4.0
+# pika>=1.3.0
 
-# Logging
-python-json-logger==2.0.7
-structlog==24.2.0
+# Scheduler (se necessário)
+# apscheduler>=3.10.0
+
+# HTTP Client (necessário para health check do Skyvern)
+requests>=2.32.0
+# httpx>=0.27.0  # skyvern já inclui
+
+# LLM (skyvern já inclui suporte)
+# openai>=1.0.0
+# anthropic>=0.50.0
+
+# Browser Automation (playwright já incluído acima)
+# selenium>=4.27.0
+# beautifulsoup4>=4.12.0
+# lxml>=5.1.0
+
+# S3/MinIO (se necessário)
+# boto3>=1.35.0
+# minio>=7.2.0
+
+# Logging (skyvern já inclui)
+# python-json-logger>=2.0.0
+# structlog>=23.0.0
+
+# Monitoring (se necessário)
+# prometheus-client>=0.21.0
 
 # Utilities
-python-dotenv==1.0.1
-python-multipart==0.0.12
-pytz==2024.2
-
-# Monitoring
-prometheus-client==0.21.0
-
+# python-multipart>=0.0.6
+# pytz>=2024.2

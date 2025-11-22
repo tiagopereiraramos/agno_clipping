@@ -11,12 +11,14 @@ import logging
 import os
 import sys
 import uuid
+import threading
 from typing import Optional, Dict, Any, List
+from concurrent.futures import ThreadPoolExecutor
 
 import pika
 from pydantic_settings import BaseSettings
 
-from worker.agents import SuperAgent, BrowserAgent, FileAgent, NotificationAgent
+from worker.agents import SuperAgent, BrowserAgent, SkyvernAgent, FileAgent, NotificationAgent
 from worker.utils.database import DatabaseManager
 from worker.utils.llm_interpreter import LLMInterpreter
 
@@ -47,14 +49,28 @@ class ConfiguracoesWorker(BaseSettings):
     llm_input_cost_per_1k: float = 0.005
     llm_output_cost_per_1k: float = 0.015
     
-    # Browserless / Browser-Use
+    # Browser Automation - Escolha do Engine
+    browser_engine: str = "browser-use"  # "browser-use" ou "skyvern"
+    
+    # Browserless / Browser-Use (para browser_engine="browser-use")
+    use_local_browser: bool = True  # True = Playwright local, False = Browserless remoto
     browserless_url: str = "http://browserless:3000"
     browserless_token: Optional[str] = None
     browser_use_model: str = "gpt-5-mini-2025-08-07"
-    browser_use_max_steps: int = 40
+    browser_use_max_steps: int = 30
     browser_use_temperature: float = 0.2
     browser_use_allowed_domains: Optional[str] = None
-    browser_use_retries: int = 2
+    browser_use_retries: int = 3
+    browser_use_timeout: int = 3600  # 60 minutos máximo (aumentado para máxima estabilidade)
+    
+    # Skyvern MCP (para browser_engine="skyvern")
+    skyvern_model: str = "gpt-5-mini-2025-08-07"
+    skyvern_timeout: int = 3600
+    skyvern_prompt_path: str = "/app/prompts/clipping_lear.txt"
+    skyvern_config_path: str = "/app/config/clipping_params.json"
+    skyvern_results_dir: str = "/app/results"
+    skyvern_transport: str = "http"  # "http" (servidor local) ou "stdio" (execução direta)
+    skyvern_base_url: str = "http://localhost:8000"  # URL do servidor Skyvern local
     
     # MinIO
     minio_endpoint: Optional[str] = None
@@ -92,6 +108,8 @@ class WorkerAgno:
         self.config = configuracoes
         self.conexao: Optional[pika.BlockingConnection] = None
         self.canal: Optional[pika.channel.Channel] = None
+        self.executor = ThreadPoolExecutor(max_workers=configuracoes.worker_concurrency)
+        self.lock = threading.Lock()
         
         # Inicializar componentes
         self.db = DatabaseManager(configuracoes.database_url)
@@ -130,24 +148,41 @@ class WorkerAgno:
         """
         agentes = {}
         
-        # Browser Agent
-        allowed_domains = self.config.browser_use_allowed_domains
-        if allowed_domains:
-            allowed_domains = [dom.strip() for dom in allowed_domains.split(",") if dom.strip()]
+        # Browser Agent - Escolha entre browser-use e skyvern
+        if self.config.browser_engine.lower() == "skyvern":
+            # Usar Skyvern MCP + Agno
+            agentes["browser"] = SkyvernAgent({
+                "openai_api_key": self.config.openai_api_key,
+                "skyvern_model": self.config.skyvern_model,
+                "skyvern_timeout": self.config.skyvern_timeout,
+                "prompt_path": self.config.skyvern_prompt_path,
+                "config_path": self.config.skyvern_config_path,
+                "results_dir": self.config.skyvern_results_dir,
+                "skyvern_transport": self.config.skyvern_transport,
+                "skyvern_base_url": self.config.skyvern_base_url
+            })
         else:
-            allowed_domains = ["automotivebusiness.com.br", "www.automotivebusiness.com.br"]
-        
-        agentes["browser"] = BrowserAgent({
-            "browserless_url": self.config.browserless_url,
-            "browserless_token": self.config.browserless_token,
-            "timeout": 30000,
-            "openai_api_key": self.config.openai_api_key,
-            "browser_use_model": self.config.browser_use_model,
-            "browser_use_max_steps": self.config.browser_use_max_steps,
-            "browser_use_temperature": self.config.browser_use_temperature,
-            "browser_use_retries": self.config.browser_use_retries,
-            "allowed_domains": allowed_domains
-        })
+            # Usar Browser-Use (padrão)
+            allowed_domains = self.config.browser_use_allowed_domains
+            if allowed_domains:
+                allowed_domains = [dom.strip() for dom in allowed_domains.split(",") if dom.strip()]
+            else:
+                allowed_domains = ["automotivebusiness.com.br", "www.automotivebusiness.com.br"]
+            
+            agentes["browser"] = BrowserAgent({
+                "use_local_browser": self.config.use_local_browser,
+                "browserless_url": self.config.browserless_url,
+                "browserless_token": self.config.browserless_token,
+                "timeout": 30000,
+                "openai_api_key": self.config.openai_api_key,
+                "browser_use_model": self.config.browser_use_model,
+                "browser_use_max_steps": self.config.browser_use_max_steps,
+                "browser_use_temperature": self.config.browser_use_temperature,
+                "browser_use_retries": self.config.browser_use_retries,
+                "browser_use_timeout": self.config.browser_use_timeout,
+                "storage_state_path": "/app/browser_session/storage_state.json",
+                "allowed_domains": allowed_domains
+            })
         
         # File Agent
         agentes["file"] = FileAgent({
@@ -175,6 +210,47 @@ class WorkerAgno:
         })
         
         return agentes
+    
+    def _processar_job_em_thread(self, ch, method, properties, body: bytes) -> None:
+        """
+        Callback que agenda processamento em thread separada.
+        
+        Args:
+            ch: Canal do RabbitMQ
+            method: Método de entrega
+            properties: Propriedades da mensagem
+            body: Corpo da mensagem
+        """
+        # Executar em thread separada para permitir paralelismo
+        self.executor.submit(self._executar_job_em_thread, ch, method, properties, body)
+    
+    def _executar_job_em_thread(self, ch, method, properties, body: bytes) -> None:
+        """
+        Executa processamento do job em thread separada.
+        
+        Args:
+            ch: Canal do RabbitMQ (não usado, mas necessário para compatibilidade)
+            method: Método de entrega
+            properties: Propriedades da mensagem
+            body: Corpo da mensagem
+        """
+        # Criar nova conexão para esta thread (pika não é thread-safe)
+        try:
+            parametros = pika.URLParameters(self.config.rabbitmq_url)
+            thread_conn = pika.BlockingConnection(parametros)
+            thread_ch = thread_conn.channel()
+        except Exception as e:
+            logger.error(f"Erro ao criar conexão RabbitMQ na thread: {e}")
+            return
+        
+        try:
+            self.processar_mensagem(thread_ch, method, properties, body)
+        finally:
+            if thread_conn:
+                try:
+                    thread_conn.close()
+                except:
+                    pass
     
     def processar_mensagem(self, ch, method, properties, body: bytes) -> None:
         """
@@ -280,13 +356,13 @@ class WorkerAgno:
             # Configurar QoS
             self.canal.basic_qos(prefetch_count=self.config.worker_concurrency)
             
-            # Consumir mensagens
+            # Consumir mensagens com processamento paralelo
             self.canal.basic_consume(
                 queue="clippings.jobs",
-                on_message_callback=self.processar_mensagem
+                on_message_callback=self._processar_job_em_thread
             )
             
-            logger.info("Worker iniciado e aguardando mensagens...")
+            logger.info(f"Worker iniciado e aguardando mensagens (concorrência: {self.config.worker_concurrency})...")
             self.canal.start_consuming()
             
         except KeyboardInterrupt:
@@ -302,6 +378,8 @@ class WorkerAgno:
             self.canal.stop_consuming()
         if self.conexao and not self.conexao.is_closed:
             self.conexao.close()
+        if self.executor:
+            self.executor.shutdown(wait=True)
         logger.info("Worker parado")
 
 

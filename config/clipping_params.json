@@ -1,0 +1,7 @@
+{
+  "cliente": "LEAR",
+  "periodo": "últimos 30 dias",
+  "max_itens": 15,
+  "site": "https://www.automotivebusiness.com.br/",
+  "timeout": 3600
+}

@@ -45,37 +45,28 @@ class LLMInterpreter:
         Returns:
             Dicionário com parâmetros estruturados
         """
-        prompt = f"""Você é um assistente que interpreta instruções de clipping de conteúdo web.
-
-Analise a seguinte instrução e extraia:
-1. URL da página (se mencionada)
-2. Tipo de conteúdo a ser extraído
-3. Parâmetros adicionais
+        # Prompt otimizado para economia de tokens
+        prompt = f"""Extraia da instrução: URL, tipo, parâmetros.
 
 Instrução: "{instrucao}"
 
-Retorne APENAS um JSON válido com a seguinte estrutura:
+Retorne JSON:
 {{
-    "url": "URL extraída ou null",
-    "tipo": "tipo de conteúdo (artigo, noticia, produto, etc)",
-    "parametros": {{
-        "extrair_imagens": true/false,
-        "extrair_links": true/false,
-        "formato": "json/markdown/both"
-    }},
-    "instrucoes_especificas": "qualquer instrução adicional mencionada"
-}}
-
-Se a URL não estiver explícita, tente inferir ou retorne null. Seja preciso e retorne apenas JSON válido."""
+    "url": "URL ou null",
+    "tipo": "noticia|artigo|produto",
+    "parametros": {{"extrair_imagens": false, "extrair_links": true, "formato": "json"}},
+    "instrucoes_especificas": "resumo conciso"
+}}"""
 
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "Você é um especialista em extrair informações estruturadas de instruções em linguagem natural. Sempre retorne apenas JSON válido."},
+                    {"role": "system", "content": "Extraia dados estruturados. Retorne apenas JSON."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3,
+                temperature=0.2,  # Reduzido para mais determinismo
+                max_tokens=300,  # Limitar tokens de saída
                 response_format={"type": "json_object"}
             )
             

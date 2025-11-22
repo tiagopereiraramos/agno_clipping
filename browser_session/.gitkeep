@@ -1,0 +1,2 @@
+# Este diretório armazena a sessão do Chrome extraída
+# Execute: ./scripts/extrair_sessao_chrome.sh para gerar storage_state.json
